@@ -23,7 +23,7 @@ See [Configuration](docs/configuration.md) for build details, CLI flags, and `no
 
 ## Philosophy
 
-Our intent is to provide simple, permissionless, and secure communication layer for AI/ML workflows.  Enforcing the separation of concerns between the network layer and the application layer allows for greater flexibility and scalability.  This node is agnostic to the application layer and simply provides an interface for applications to build upon.  We are excited to see what you build!
+Our intent is to provide a simple, permissionless, and secure communication layer for AI/ML workflows.  This node is agnostic to the application layer and simply provides an interface for applications to build upon.  Enforcing the separation of concerns between the network layer and the application layer allows for greater flexibility and scalability.  We are excited to see what you build!
 
 ### Public Nodes
 We encourage anyone to run a public node to help bootstrap the network.  To run a public node one must expose a public IP address and port, and then run the node with the `-listen` flag or setting the config option.
