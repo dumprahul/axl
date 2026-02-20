@@ -4,10 +4,12 @@ import (
 	"encoding/binary"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 	"time"
 
@@ -165,7 +167,10 @@ func TestSendResponseLargeData(t *testing.T) {
 	}
 }
 
-// mockWriteConn is a minimal net.Conn implementation for testing write errors
+// errWriteFailed is the sentinel error returned by mockWriteConn on a simulated write failure.
+var errWriteFailed = errors.New("write failed")
+
+// mockWriteConn is a minimal net.Conn implementation for testing write errors.
 type mockWriteConn struct {
 	writeCount int
 	failOnCall int // 0 = never fail, 1 = fail on first call, 2 = fail on second call
@@ -181,7 +186,7 @@ func (m *mockWriteConn) SetWriteDeadline(t time.Time) error { return nil }
 func (m *mockWriteConn) Write(b []byte) (int, error) {
 	m.writeCount++
 	if m.failOnCall > 0 && m.writeCount == m.failOnCall {
-		return 0, errors.New("write failed")
+		return 0, errWriteFailed
 	}
 	return len(b), nil
 }
@@ -193,8 +198,11 @@ func TestSendResponseWriteLengthError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if err.Error() != "failed to write length: write failed" {
-		t.Errorf("unexpected error: %v", err)
+	if !errors.Is(err, errWriteFailed) {
+		t.Errorf("expected errWriteFailed in chain, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "length") {
+		t.Errorf("expected 'length' in error message, got: %v", err)
 	}
 }
 
@@ -205,8 +213,11 @@ func TestSendResponseWriteDataError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if err.Error() != "failed to write data: write failed" {
-		t.Errorf("unexpected error: %v", err)
+	if !errors.Is(err, errWriteFailed) {
+		t.Errorf("expected errWriteFailed in chain, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "data") {
+		t.Errorf("expected 'data' in error message, got: %v", err)
 	}
 }
 
@@ -245,10 +256,8 @@ func (t *testConn) RemoteAddr() net.Addr {
 }
 
 func TestHandleTCPConnNonMCPMessage(t *testing.T) {
-	// Clear the recv queue
-	api.RecvMutex.Lock()
-	api.RecvQueue = nil
-	api.RecvMutex.Unlock()
+	t.Cleanup(func() { api.DefaultRecvQueue.Reset() })
+	api.DefaultRecvQueue.Reset()
 
 	client, server := net.Pipe()
 
@@ -265,8 +274,7 @@ func TestHandleTCPConnNonMCPMessage(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		// Use a dummy router URL since MCP won't match
-		handleTCPConn(wrappedServer, "http://localhost:1", "")
+		handleTCPConn(wrappedServer, NewMultiplexer())
 	}()
 
 	// Write message and close to trigger EOF
@@ -280,24 +288,20 @@ func TestHandleTCPConnNonMCPMessage(t *testing.T) {
 		t.Fatal("timeout waiting for handleTCPConn to finish")
 	}
 
-	// Check that message was added to RecvQueue
-	api.RecvMutex.Lock()
-	defer api.RecvMutex.Unlock()
-
-	if len(api.RecvQueue) != 1 {
-		t.Fatalf("expected 1 message in queue, got %d", len(api.RecvQueue))
+	// Check that message was added to DefaultRecvQueue
+	if api.DefaultRecvQueue.Len() != 1 {
+		t.Fatalf("expected 1 message in queue, got %d", api.DefaultRecvQueue.Len())
 	}
 
-	if string(api.RecvQueue[0].Data) != string(nonMCPData) {
-		t.Errorf("expected data %s, got %s", string(nonMCPData), string(api.RecvQueue[0].Data))
+	snap := api.DefaultRecvQueue.Snapshot()
+	if string(snap[0].Data) != string(nonMCPData) {
+		t.Errorf("expected data %s, got %s", string(nonMCPData), string(snap[0].Data))
 	}
 }
 
 func TestHandleTCPConnMultipleMessages(t *testing.T) {
-	// Clear the recv queue
-	api.RecvMutex.Lock()
-	api.RecvQueue = nil
-	api.RecvMutex.Unlock()
+	t.Cleanup(func() { api.DefaultRecvQueue.Reset() })
+	api.DefaultRecvQueue.Reset()
 
 	client, server := net.Pipe()
 	wrappedServer := &testConn{
@@ -314,7 +318,7 @@ func TestHandleTCPConnMultipleMessages(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		handleTCPConn(wrappedServer, "http://localhost:1", "")
+		handleTCPConn(wrappedServer, NewMultiplexer())
 	}()
 
 	// Send all messages then close
@@ -329,16 +333,14 @@ func TestHandleTCPConnMultipleMessages(t *testing.T) {
 		t.Fatal("timeout")
 	}
 
-	api.RecvMutex.Lock()
-	defer api.RecvMutex.Unlock()
-
-	if len(api.RecvQueue) != 3 {
-		t.Fatalf("expected 3 messages in queue, got %d", len(api.RecvQueue))
+	if api.DefaultRecvQueue.Len() != 3 {
+		t.Fatalf("expected 3 messages in queue, got %d", api.DefaultRecvQueue.Len())
 	}
 
+	snap := api.DefaultRecvQueue.Snapshot()
 	for i, msg := range messages {
-		if string(api.RecvQueue[i].Data) != msg {
-			t.Errorf("message %d: expected %s, got %s", i, msg, string(api.RecvQueue[i].Data))
+		if string(snap[i].Data) != msg {
+			t.Errorf("message %d: expected %s, got %s", i, msg, string(snap[i].Data))
 		}
 	}
 }
@@ -368,74 +370,71 @@ func TestHandleTCPConnMCPMessageWithResponse(t *testing.T) {
 	}
 	mcpData, _ := json.Marshal(mcpMsg)
 
-	var responseData []byte
-	responseDone := make(chan struct{})
+	// responseData is written by the reader goroutine and read by the test after sync.
+	responseData := make(chan []byte, 1)
 
+	// Read the length-prefixed response sent back by handleTCPConn.
 	go func() {
-		defer close(responseDone)
-		// Read the response from handleTCPConn
 		lenBuf := make([]byte, 4)
 		if _, err := io.ReadFull(client, lenBuf); err != nil {
-			t.Logf("read length error (may be expected): %v", err)
+			responseData <- nil
 			return
 		}
 		length := binary.BigEndian.Uint32(lenBuf)
-		responseData = make([]byte, length)
-		if _, err := io.ReadFull(client, responseData); err != nil {
-			t.Logf("read data error: %v", err)
+		buf := make([]byte, length)
+		if _, err := io.ReadFull(client, buf); err != nil {
+			responseData <- nil
 			return
 		}
+		responseData <- buf
 	}()
+
+	mux := NewMultiplexer()
+	mcpStream := mcp.NewMCPStream(routerServer.URL)
+	mux.AddSource(mcpStream, func() any { return &api.MCPMessage{} })
 
 	handlerDone := make(chan struct{})
 	go func() {
 		defer close(handlerDone)
-		handleTCPConn(wrappedServer, routerServer.URL, "")
+		handleTCPConn(wrappedServer, mux)
 	}()
 
-	// Write the MCP message
+	// Send the MCP message; handleTCPConn will forward it to the router and write back a response.
 	client.Write(frameMessage(mcpData))
 
-	// Wait a bit for response to come back
-	time.Sleep(100 * time.Millisecond)
+	// Block until we have the response — no sleep, no skip.
+	select {
+	case data := <-responseData:
+		if data == nil {
+			t.Fatal("failed to read response from handleTCPConn")
+		}
+		var mcpResp api.MCPResponse
+		if err := json.Unmarshal(data, &mcpResp); err != nil {
+			t.Fatalf("failed to unmarshal response: %v", err)
+		}
+		if mcpResp.Service != "weather" {
+			t.Errorf("expected service 'weather', got %s", mcpResp.Service)
+		}
+		if string(mcpResp.Response) != string(expectedResponse) {
+			t.Errorf("expected response %s, got %s", string(expectedResponse), string(mcpResp.Response))
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timeout waiting for response from handleTCPConn")
+	}
 
-	// Close client to terminate the handler
+	// Close client to let the handler's next ReadFull return EOF and exit cleanly.
 	client.Close()
 
-	// Wait for handler
 	select {
 	case <-handlerDone:
 	case <-time.After(2 * time.Second):
-		t.Fatal("timeout waiting for handler")
-	}
-
-	// Wait for response reader
-	select {
-	case <-responseDone:
-	case <-time.After(100 * time.Millisecond):
-		// Response may not have arrived, that's okay
-	}
-
-	if len(responseData) == 0 {
-		t.Skip("response not received (timing issue)")
-	}
-
-	// Parse response
-	var mcpResp api.MCPResponse
-	if err := json.Unmarshal(responseData, &mcpResp); err != nil {
-		t.Fatalf("failed to unmarshal response: %v", err)
-	}
-
-	if mcpResp.Service != "weather" {
-		t.Errorf("expected service 'weather', got %s", mcpResp.Service)
+		t.Fatal("timeout waiting for handler to exit")
 	}
 }
 
 func TestHandleTCPConnQueueOverflow(t *testing.T) {
-	// Clear the recv queue
-	api.RecvMutex.Lock()
-	api.RecvQueue = nil
-	api.RecvMutex.Unlock()
+	t.Cleanup(func() { api.DefaultRecvQueue.Reset() })
+	api.DefaultRecvQueue.Reset()
 
 	client, server := net.Pipe()
 	wrappedServer := &testConn{
@@ -446,12 +445,12 @@ func TestHandleTCPConnQueueOverflow(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		handleTCPConn(wrappedServer, "http://localhost:1", "")
+		handleTCPConn(wrappedServer, NewMultiplexer())
 	}()
 
 	// Send more than 100 messages to test queue overflow
 	for i := 0; i < 105; i++ {
-		msg := []byte(`{"index":` + string(rune('0'+i%10)) + `}`)
+		msg := []byte(fmt.Sprintf(`{"index":%d}`, i))
 		client.Write(frameMessage(msg))
 	}
 	client.Close()
@@ -462,12 +461,9 @@ func TestHandleTCPConnQueueOverflow(t *testing.T) {
 		t.Fatal("timeout")
 	}
 
-	api.RecvMutex.Lock()
-	defer api.RecvMutex.Unlock()
-
 	// Queue should be capped at 100
-	if len(api.RecvQueue) > 100 {
-		t.Errorf("expected queue length <= 100, got %d", len(api.RecvQueue))
+	if api.DefaultRecvQueue.Len() > 100 {
+		t.Errorf("expected queue length <= 100, got %d", api.DefaultRecvQueue.Len())
 	}
 }
 
@@ -481,7 +477,7 @@ func TestHandleTCPConnImmediateEOF(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		handleTCPConn(wrappedServer, "http://localhost:1", "")
+		handleTCPConn(wrappedServer, NewMultiplexer())
 	}()
 
 	// Close immediately
@@ -505,7 +501,7 @@ func TestHandleTCPConnPartialLengthRead(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		handleTCPConn(wrappedServer, "http://localhost:1", "")
+		handleTCPConn(wrappedServer, NewMultiplexer())
 	}()
 
 	// Write only 2 bytes of the 4-byte length header, then close
@@ -530,7 +526,7 @@ func TestHandleTCPConnPartialDataRead(t *testing.T) {
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
-		handleTCPConn(wrappedServer, "http://localhost:1", "")
+		handleTCPConn(wrappedServer, NewMultiplexer())
 	}()
 
 	// Write length header saying 100 bytes, but only send 10
@@ -545,5 +541,152 @@ func TestHandleTCPConnPartialDataRead(t *testing.T) {
 		// Success - handler returned on read error
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout - handler did not return on partial data read")
+	}
+}
+
+// --- peerIDFromAddr tests ---
+
+func TestPeerIDFromAddrValidIPv6(t *testing.T) {
+	addr := &net.TCPAddr{IP: net.ParseIP("200::1"), Port: 12345}
+	result := peerIDFromAddr(addr)
+	if len(result) != 64 {
+		t.Errorf("expected 64-char hex string, got %d chars: %q", len(result), result)
+	}
+}
+
+func TestPeerIDFromAddrNilIP(t *testing.T) {
+	addr := &net.TCPAddr{IP: nil, Port: 0}
+	result := peerIDFromAddr(addr)
+	if result != "" {
+		t.Errorf("expected empty string for nil IP, got %q", result)
+	}
+}
+
+func TestPeerIDFromAddrDifferentAddressesProduceDifferentIDs(t *testing.T) {
+	addr1 := &net.TCPAddr{IP: net.ParseIP("200::1"), Port: 12345}
+	addr2 := &net.TCPAddr{IP: net.ParseIP("201::1"), Port: 12345}
+	id1 := peerIDFromAddr(addr1)
+	id2 := peerIDFromAddr(addr2)
+	if id1 == id2 {
+		t.Errorf("expected different peer IDs for different addresses, both got %q", id1)
+	}
+}
+
+func TestPeerIDFromAddrSameAddressProducesSameID(t *testing.T) {
+	addr := &net.TCPAddr{IP: net.ParseIP("200::1"), Port: 12345}
+	id1 := peerIDFromAddr(addr)
+	id2 := peerIDFromAddr(addr)
+	if id1 != id2 {
+		t.Errorf("expected same peer ID for same address, got %q and %q", id1, id2)
+	}
+}
+
+// --- handleTCPConn branch coverage ---
+
+// writeFailingConn proxies reads to the underlying net.Conn but rejects all writes.
+// Used to exercise sendResponse error paths without timing-sensitive connection teardown.
+type writeFailingConn struct {
+	net.Conn
+}
+
+func (c *writeFailingConn) Write([]byte) (int, error) {
+	return 0, errors.New("write disabled")
+}
+
+func TestHandleTCPConnOversizedMessage(t *testing.T) {
+	client, server := net.Pipe()
+	wrappedServer := &testConn{
+		Conn:       server,
+		remoteAddr: &net.TCPAddr{IP: net.ParseIP("200::1"), Port: 12345},
+	}
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		handleTCPConn(wrappedServer, NewMultiplexer())
+	}()
+
+	// Write a length header encoding MaxMessageSize+1 — handler must drop the connection.
+	lenBuf := make([]byte, 4)
+	binary.BigEndian.PutUint32(lenBuf, api.MaxMessageSize+1)
+	client.Write(lenBuf)
+
+	select {
+	case <-done:
+		// Expected: handler returned without reading a payload.
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout — handler did not return on oversized message")
+	}
+	client.Close()
+}
+
+func TestHandleTCPConnStreamForwardError(t *testing.T) {
+	client, server := net.Pipe()
+	wrappedServer := &testConn{
+		Conn:       server,
+		remoteAddr: &net.TCPAddr{IP: net.ParseIP("200::1"), Port: 12345},
+	}
+
+	testData := []byte(`{"type":"forward-error-test"}`)
+	errStream := &mockStream{
+		id:          "err-stream",
+		allowedData: testData,
+		forwardErr:  errors.New("upstream unavailable"),
+	}
+	mux := NewMultiplexer()
+	mux.AddSource(errStream, func() any { return &struct{}{} })
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		handleTCPConn(wrappedServer, mux)
+	}()
+
+	// net.Pipe is synchronous: Write blocks until server's ReadFull consumes all bytes.
+	// After it returns, the server has already called Forward (which returns the error)
+	// and is looping back to read the next message.
+	client.Write(frameMessage(testData))
+	client.Close() // EOF on next read causes handler to exit cleanly.
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout")
+	}
+}
+
+func TestHandleTCPConnSendResponseFailure(t *testing.T) {
+	client, server := net.Pipe()
+	// writeFailingConn proxies reads from server but blocks all writes,
+	// so sendResponse inside handleTCPConn will always fail.
+	wrappedServer := &testConn{
+		Conn:       &writeFailingConn{server},
+		remoteAddr: &net.TCPAddr{IP: net.ParseIP("200::1"), Port: 12345},
+	}
+
+	testData := []byte(`{"type":"send-response-test"}`)
+	respondingStream := &mockStream{
+		id:            "responder",
+		allowedData:   testData,
+		forwardResult: []byte(`{"result":"ok"}`),
+	}
+	mux := NewMultiplexer()
+	mux.AddSource(respondingStream, func() any { return &struct{}{} })
+
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		handleTCPConn(wrappedServer, mux)
+	}()
+
+	// Write blocks until server's ReadFull consumes the bytes; sendResponse then fails
+	// immediately because writeFailingConn rejects the write unconditionally.
+	client.Write(frameMessage(testData))
+	client.Close() // EOF on next read causes handler to exit cleanly.
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("timeout")
 	}
 }

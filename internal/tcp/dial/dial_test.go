@@ -1,11 +1,14 @@
 package dial
 
 import (
-	"encoding/hex"
 	"errors"
+	"net"
 	"strings"
 	"testing"
 	"time"
+
+	"gvisor.dev/gvisor/pkg/tcpip"
+	"gvisor.dev/gvisor/pkg/tcpip/stack"
 )
 
 // These tests focus on key validation since actual dialing requires a real gVisor stack.
@@ -109,8 +112,7 @@ func TestDialPeerConnectionInvalidHexPatterns(t *testing.T) {
 }
 
 func TestDialPeerConnectionKeyLengthBoundaries(t *testing.T) {
-	// Test various key lengths that should all fail validation
-	// Note: 32 bytes is the valid length, but we can't test it without a real gVisor stack
+	// Test various key lengths that should all fail validation (32 bytes is valid)
 	tests := []struct {
 		name      string
 		byteCount int
@@ -119,7 +121,7 @@ func TestDialPeerConnectionKeyLengthBoundaries(t *testing.T) {
 		{"1 byte", 1},
 		{"16 bytes", 16},
 		{"31 bytes", 31},
-		// 32 bytes is valid - skip since nil stack panics
+		// 32 bytes is valid — tested separately via dialTCP injection
 		{"33 bytes", 33},
 		{"64 bytes", 64},
 	}
@@ -139,48 +141,46 @@ func TestDialPeerConnectionKeyLengthBoundaries(t *testing.T) {
 	}
 }
 
-func TestValidKeyFormats(t *testing.T) {
-	// These are valid hex formats that should pass validation
-	// We only verify they decode to 32 bytes, since we can't dial without a stack
-	validKeys := []string{
-		strings.Repeat("00", 32),                    // All zeros
-		strings.Repeat("ff", 32),                    // All ones
-		strings.Repeat("ab", 32),                    // Repeating pattern
-		"0123456789abcdef" + strings.Repeat("00", 24), // Mixed digits and letters
-		strings.ToUpper(strings.Repeat("ab", 32)),  // Uppercase
-		"AbCdEf" + strings.Repeat("00", 29),        // Mixed case
-	}
+// setDialTCP replaces dialTCP for the duration of a test and restores it on cleanup.
+func setDialTCP(t *testing.T, fn func(*stack.Stack, tcpip.FullAddress) (net.Conn, error)) {
+	t.Helper()
+	old := dialTCP
+	dialTCP = fn
+	t.Cleanup(func() { dialTCP = old })
+}
 
-	for _, key := range validKeys {
-		decoded, err := hex.DecodeString(key)
-		if err != nil {
-			t.Errorf("key %q should be valid hex: %v", key[:16]+"...", err)
-			continue
-		}
-		if len(decoded) != 32 {
-			t.Errorf("key %q should decode to 32 bytes, got %d", key[:16]+"...", len(decoded))
-		}
+func TestDialPeerConnectionDialError(t *testing.T) {
+	setDialTCP(t, func(_ *stack.Stack, _ tcpip.FullAddress) (net.Conn, error) {
+		return nil, errors.New("connection refused")
+	})
+
+	validKey := strings.Repeat("ab", 32)
+	_, err := DialPeerConnection(nil, 7000, validKey, 30*time.Second)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	if !errors.Is(err, ErrDialPeer) {
+		t.Errorf("expected ErrDialPeer, got %v", err)
 	}
 }
 
-func TestInvalidKeyFormats(t *testing.T) {
-	// These should all fail hex validation
-	invalidKeys := []string{
-		"",                           // Empty
-		"g" + strings.Repeat("0", 63), // Invalid hex char
-		strings.Repeat("0", 63),      // Odd length
-		" " + strings.Repeat("0", 63), // Leading space
-		strings.Repeat("0", 63) + " ", // Trailing space
-	}
+func TestDialPeerConnectionSuccess(t *testing.T) {
+	peerConn, localConn := net.Pipe()
+	defer peerConn.Close()
+	defer localConn.Close()
 
-	for _, key := range invalidKeys {
-		_, err := hex.DecodeString(key)
-		if err == nil {
-			// If hex.DecodeString succeeds, check length
-			decoded, _ := hex.DecodeString(key)
-			if len(decoded) == 32 {
-				t.Errorf("key should be invalid but passed: %q", key)
-			}
-		}
+	setDialTCP(t, func(_ *stack.Stack, _ tcpip.FullAddress) (net.Conn, error) {
+		return peerConn, nil
+	})
+
+	validKey := strings.Repeat("ab", 32)
+	conn, err := DialPeerConnection(nil, 7000, validKey, 5*time.Second)
+	if err != nil {
+		t.Fatalf("expected no error, got %v", err)
 	}
+	if conn == nil {
+		t.Fatal("expected non-nil connection")
+	}
+	conn.Close()
 }
+
