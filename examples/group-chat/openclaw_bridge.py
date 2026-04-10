@@ -70,15 +70,19 @@ def _fan_out(
     our_key: str,
     group_id: str,
     text: str,
-) -> int:
-    """Send a group message to every member. Returns count of failures."""
-    payload = json.dumps({
+    from_agent: bool = False,
+) -> tuple[int, dict]:
+    """Send a group message to every member. Returns (failure count, message dict)."""
+    msg: dict = {
         "type": "group_chat",
         "group_id": group_id,
         "from": our_name,
         "from_key": our_key,
         "text": text,
-    }).encode()
+    }
+    if from_agent:
+        msg["_from_agent"] = True
+    payload = json.dumps(msg).encode()
 
     failed = 0
     for key in members:
@@ -97,7 +101,7 @@ def _fan_out(
                 failed += 1
         except Exception:
             failed += 1
-    return failed
+    return failed, msg
 
 
 def _ask_openclaw(
@@ -288,8 +292,7 @@ def main() -> None:
                 continue
             if msg.get("group_id") != args.group:
                 continue
-            from_key = msg.get("from_key") or msg.get("_from_peer", "")
-            if from_key == our_key:
+            if msg.get("_from_agent"):
                 continue
 
             sender = msg.get("from", "someone")
@@ -323,9 +326,21 @@ def main() -> None:
 
             _log("▶ OUT", f"{args.name}: {reply[:120]}{'…' if len(reply) > 120 else ''}")
 
-            failed = _fan_out(node_url, members, args.name, our_key, args.group, reply)
+            failed, response_msg = _fan_out(
+                node_url, members, args.name, our_key, args.group, reply,
+                from_agent=True,
+            )
             if failed:
                 _log("⚡", f"Fan-out: {failed}/{len(members)} send(s) failed")
+
+            try:
+                requests.post(
+                    f"{dispatcher_url}/broadcast",
+                    json=response_msg,
+                    timeout=5,
+                )
+            except Exception:
+                pass
 
             time.sleep(POLL_INTERVAL)
 

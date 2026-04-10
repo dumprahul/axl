@@ -367,6 +367,17 @@ class GroupChatApp(App):
                 f"⚡ Failed to reach {failed}/{len(self.members)} member(s)",
             )
 
+        if self.dispatcher_url:
+            try:
+                requests.post(
+                    f"{self.dispatcher_url}/broadcast",
+                    data=payload,
+                    headers={"Content-Type": "application/json"},
+                    timeout=5,
+                )
+            except Exception:
+                pass
+
     # ── recv path ──────────────────────────────────────────
 
     @work(thread=True, group="recv")
@@ -389,7 +400,7 @@ class GroupChatApp(App):
                         continue
                     if msg.get("group_id") != self.group_id:
                         continue
-                    if msg.get("from_key") == self.our_key:
+                    if msg.get("from_key") == self.our_key and not msg.get("_from_agent"):
                         continue
 
                     text = msg.get("text", "")

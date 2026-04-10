@@ -103,8 +103,7 @@ def _bridge_loop(
             continue
         if msg.get("group_id") != group_id:
             continue
-        from_key = msg.get("from_key") or msg.get("_from_peer", "")
-        if from_key == our_key:
+        if msg.get("_from_agent"):
             continue
 
         text = msg.get("text", "")
@@ -121,7 +120,20 @@ def _bridge_loop(
         except Exception:
             continue
 
-        _bridge_fan_out(node_url, members, agent_name, our_key, group_id, reply)
+        failed, response_msg = _bridge_fan_out(
+            node_url, members, agent_name, our_key, group_id, reply,
+            from_agent=True,
+        )
+
+        try:
+            requests.post(
+                f"{dispatcher_url}/broadcast",
+                json=response_msg,
+                timeout=5,
+            )
+        except Exception:
+            pass
+
         time.sleep(BRIDGE_POLL)
 
 

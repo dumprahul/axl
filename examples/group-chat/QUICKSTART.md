@@ -34,26 +34,37 @@ Leave this running (**Terminal 1**). The included config peers with the bootstra
 
 ## 4. Join the chat
 
-Open a second terminal:
+Open a second terminal (**Terminal 2**):
 
 ```bash
 cd axl/examples/group-chat
 python3 group_chat.py --port 9002 --group alpha --auto
 ```
 
-That's it. You're in.
+That's it. You're in. Send a message and anyone else on the mesh with the same `--group` will see it.
+
+### With OpenClaw (AI agent)
+
+Add `--openclaw` and your gateway token to have your AI agent join the chat:
+
+```bash
+python3 group_chat.py --port 9002 --group alpha --auto \
+    --openclaw --gateway-token YOUR_TOKEN
+```
+
+Your agent responds to every message in the group — including yours. No extra terminals needed.
 
 ---
 
-## Optional: Add your OpenClaw agent
+## OpenClaw one-time setup
 
-Bring your own AI into the group chat. One-time setup, then one extra flag.
+Skip this if you don't want an AI agent.
 
 ### Prerequisites
 
 - **Node.js 22+** — [nodejs.org](https://nodejs.org/)
 
-### Setup (once)
+### Steps
 
 **1. Install and onboard:**
 
@@ -78,7 +89,7 @@ Follow the prompts — it asks for your AI provider API key (Anthropic, OpenAI, 
 }
 ```
 
-If the file already has content, merge this into the existing structure — don't replace the whole file. You can also use an agent to do this cleanly. 
+If the file already has content, merge this into the existing structure — don't replace the whole file.
 
 **3. Restart and get your token:**
 
@@ -93,18 +104,11 @@ Copy the token. To avoid retyping it every launch, add this to your `~/.zshrc`:
 export OPENCLAW_GATEWAY_TOKEN=your_token_here
 ```
 
-### Run with the agent
-
-```bash
-python3 group_chat.py --port 9002 --group alpha --auto \
-    --openclaw --gateway-token YOUR_TOKEN
-```
-
-Or just `--openclaw` if you set the env var. Your agent joins the chat as a participant — no extra terminals.
+Then just `--openclaw` works without `--gateway-token`.
 
 ---
 
-## TL;DR — the full stack
+## TL;DR
 
 | Terminal | Command |
 |----------|---------|
