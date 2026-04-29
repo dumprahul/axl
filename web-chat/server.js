@@ -13,6 +13,11 @@ app.use(express.text({ type: ["text/*", "application/octet-stream"], limit: "1mb
 const NODE_A_URL = process.env.AXL_NODE_A_URL || "http://127.0.0.1:9002";
 const NODE_B_URL = process.env.AXL_NODE_B_URL || "http://127.0.0.1:9012";
 
+function log(...args) {
+  // eslint-disable-next-line no-console
+  console.log("[web-chat]", ...args);
+}
+
 function nodeUrl(which) {
   if (which === "A") return NODE_A_URL;
   if (which === "B") return NODE_B_URL;
@@ -49,6 +54,7 @@ app.post("/api/send", async (req, res) => {
     }
 
     const url = `${nodeUrl(node)}/send`;
+    log("send", { node, destPeerId: String(destPeerId).slice(0, 12) + "…", bytes: Buffer.byteLength(message, "utf8") });
     const r = await fetch(url, {
       method: "POST",
       headers: {
@@ -59,6 +65,7 @@ app.post("/api/send", async (req, res) => {
     });
 
     const body = await r.text();
+    log("send.result", { node, status: r.status, sentBytes: r.headers.get("x-sent-bytes") });
     res.status(r.status).json({
       ok: r.ok,
       status: r.status,
@@ -82,6 +89,7 @@ app.get("/api/recv", async (req, res) => {
 
     const buf = Buffer.from(await r.arrayBuffer());
     const fromPeerId = r.headers.get("x-from-peer-id") || "";
+    log("recv", { node: which, status: r.status, fromPeerId: fromPeerId.slice(0, 12) + "…", bytes: buf.length });
 
     // Interpret as UTF-8 for chat UI; keep base64 too for debugging.
     res.status(r.status).json({
@@ -102,11 +110,8 @@ app.get("*", (_req, res) => {
 
 const port = Number(process.env.PORT || 3000);
 app.listen(port, "127.0.0.1", () => {
-  // eslint-disable-next-line no-console
-  console.log(`[web-chat] http://127.0.0.1:${port}`);
-  // eslint-disable-next-line no-console
-  console.log(`[web-chat] NODE_A_URL=${NODE_A_URL}`);
-  // eslint-disable-next-line no-console
-  console.log(`[web-chat] NODE_B_URL=${NODE_B_URL}`);
+  log(`http://127.0.0.1:${port}`);
+  log(`NODE_A_URL=${NODE_A_URL}`);
+  log(`NODE_B_URL=${NODE_B_URL}`);
 });
 

@@ -4,6 +4,11 @@ function now() {
   return new Date().toISOString().replace("T", " ").replace("Z", "");
 }
 
+function log(...args) {
+  // Centralize logging so it's easy to tweak verbosity later.
+  console.log("[axl-chat]", ...args);
+}
+
 function addMsg(logEl, { dir, fromPeerId, text, ok = true }) {
   const wrap = document.createElement("div");
   wrap.className = "msg";
@@ -24,6 +29,7 @@ function addMsg(logEl, { dir, fromPeerId, text, ok = true }) {
 }
 
 async function api(path, opts) {
+  log("fetch", path, opts?.method || "GET");
   const r = await fetch(path, opts);
   if (r.status === 204) return { status: 204, ok: true, json: null };
   const ct = r.headers.get("content-type") || "";
@@ -40,17 +46,26 @@ function setStatus(which, { ok, text }) {
 
 async function refreshTopology(which) {
   try {
+    log("topology.refresh.start", { node: which });
     const r = await api(`/api/topology?node=${encodeURIComponent(which)}`);
     if (!r.ok) {
       setStatus(which, { ok: false, text: `topology ${r.status}` });
+      log("topology.refresh.fail", { node: which, status: r.status, body: r.json });
       return;
     }
     const topo = r.json;
     const ourKeyEl = $(which === "A" ? "ourA" : "ourB");
     if (topo?.our_public_key) ourKeyEl.value = topo.our_public_key;
     setStatus(which, { ok: true, text: "ok" });
+    log("topology.refresh.ok", {
+      node: which,
+      our_public_key: topo?.our_public_key,
+      our_ipv6: topo?.our_ipv6,
+      peers: Array.isArray(topo?.peers) ? topo.peers.length : null
+    });
   } catch (e) {
     setStatus(which, { ok: false, text: "error" });
+    log("topology.refresh.error", { node: which, error: String(e?.message || e) });
   }
 }
 
@@ -64,11 +79,13 @@ async function sendFrom(which) {
   const message = textEl.value;
   if (!destPeerId) {
     addMsg(logEl, { dir: `${which} → ?`, fromPeerId: "", text: "Set 'Send to' peer id first.", ok: false });
+    log("send.skip.noDest", { node: which });
     return;
   }
   if (!message.trim()) return;
 
   const payload = { node: which, destPeerId, message };
+  log("send.start", { node: which, destPeerId, bytes: new TextEncoder().encode(message).length });
   const r = await api("/api/send", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -76,6 +93,7 @@ async function sendFrom(which) {
   });
 
   if (r.ok && r.json?.ok) {
+    log("send.ok", { node: which, destPeerId, status: r.status, sentBytes: r.json?.sentBytes });
     addMsg(logEl, {
       dir: `${which} → ${destPeerId.slice(0, 10)}…`,
       fromPeerId: ourEl.value || "",
@@ -84,6 +102,7 @@ async function sendFrom(which) {
     });
     textEl.value = "";
   } else {
+    log("send.fail", { node: which, destPeerId, status: r.status, body: r.json });
     addMsg(logEl, {
       dir: `${which} → ${destPeerId.slice(0, 10)}…`,
       fromPeerId: ourEl.value || "",
@@ -104,6 +123,7 @@ function startPolling(which) {
       const r = await fetch(`/api/recv?node=${encodeURIComponent(which)}`, { method: "GET" });
       if (r.status === 200) {
         const msg = await r.json();
+        log("recv.msg", { node: which, fromPeerId: msg.fromPeerId, bytes: (msg.text || "").length });
         addMsg(logEl, {
           dir: `${which} recv`,
           fromPeerId: msg.fromPeerId,
@@ -111,18 +131,20 @@ function startPolling(which) {
         });
       }
       // 204 is expected when no messages are queued.
-    } catch {
-      // ignore transient errors
+    } catch (e) {
+      log("recv.error", { node: which, error: String(e?.message || e) });
     } finally {
       setTimeout(tick, 150);
     }
   }
 
   pollEl.textContent = "on";
+  log("poll.start", { node: which, intervalMs: 150 });
   tick();
   return () => {
     stopped = true;
     pollEl.textContent = "off";
+    log("poll.stop", { node: which });
   };
 }
 
@@ -148,6 +170,7 @@ for (const which of ["A", "B"]) {
 }
 
 async function boot() {
+  log("boot.start");
   await refreshTopology("A");
   await refreshTopology("B");
 
@@ -157,6 +180,7 @@ async function boot() {
 
   stopPollA = startPolling("A");
   stopPollB = startPolling("B");
+  log("boot.ready", { destA: $("destA").value, destB: $("destB").value });
 }
 
 boot();
