@@ -3,7 +3,9 @@
 ## Build and Run
 
 ```bash
-go build -o node ./cmd/node/
+make build
+# or, if you don't use make:
+# GOTOOLCHAIN=go1.25.5 go build -o node ./cmd/node/
 ./node -config node-config.json
 ```
 

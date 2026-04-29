@@ -15,7 +15,7 @@ This project builds upon the Yggdrasil network stack with gvisor/tcp to provide 
 
 ## Quick Start
 ### Requirements
-- Go 1.25.5+ installed (the build system pins `GOTOOLCHAIN=go1.25.5` automatically)
+- Go 1.25.5+ (recommended). If you only have Go 1.26+, use `make build` (or prefix with `GOTOOLCHAIN=go1.25.5`) to avoid a known gVisor build-tag conflict.
 
 ```bash
 make build

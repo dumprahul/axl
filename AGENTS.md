@@ -97,7 +97,9 @@ All TCP messages between nodes are length-prefixed: a 4-byte big-endian `uint32`
 
 ### Go
 ```bash
-go build -o node ./cmd/node/
+make build
+# or, if you don't use make:
+# GOTOOLCHAIN=go1.25.5 go build -o node ./cmd/node/
 go test ./...
 ```
 

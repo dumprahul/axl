@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AXL Two-Node Chat</title>
+    <style>
+      :root {
+        --bg: #0b1020;
+        --panel: rgba(255, 255, 255, 0.06);
+        --panel2: rgba(255, 255, 255, 0.09);
+        --text: rgba(255, 255, 255, 0.92);
+        --muted: rgba(255, 255, 255, 0.65);
+        --border: rgba(255, 255, 255, 0.12);
+        --good: #53f0b8;
+        --bad: #ff6b6b;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial, "Apple Color Emoji", "Segoe UI Emoji";
+        background: radial-gradient(1000px 600px at 20% 10%, #1a2a6c55, transparent),
+                    radial-gradient(900px 500px at 80% 10%, #b21f1f33, transparent),
+                    radial-gradient(700px 500px at 50% 90%, #fdbb2d22, transparent),
+                    var(--bg);
+        color: var(--text);
+      }
+      header {
+        padding: 18px 18px 10px;
+        display: flex;
+        align-items: baseline;
+        gap: 10px;
+      }
+      header h1 { font-size: 16px; margin: 0; letter-spacing: 0.2px; }
+      header .sub { font-size: 12px; color: var(--muted); }
+
+      .wrap {
+        padding: 10px 18px 18px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 12px;
+      }
+      .card {
+        border: 1px solid var(--border);
+        background: linear-gradient(180deg, var(--panel), transparent);
+        border-radius: 14px;
+        overflow: hidden;
+        min-height: calc(100vh - 92px);
+        display: flex;
+        flex-direction: column;
+      }
+      .card .top {
+        padding: 12px 12px 10px;
+        border-bottom: 1px solid var(--border);
+        background: linear-gradient(180deg, var(--panel2), transparent);
+      }
+      .row {
+        display: grid;
+        grid-template-columns: 92px 1fr;
+        gap: 10px;
+        margin-top: 8px;
+        align-items: center;
+      }
+      label { font-size: 12px; color: var(--muted); }
+      input, textarea, button {
+        font: inherit;
+        color: var(--text);
+      }
+      input, textarea {
+        width: 100%;
+        padding: 10px 10px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: rgba(0,0,0,0.25);
+        outline: none;
+      }
+      textarea { resize: vertical; min-height: 44px; max-height: 120px; }
+      .btns {
+        display: flex;
+        gap: 8px;
+        margin-top: 10px;
+      }
+      button {
+        padding: 10px 12px;
+        border-radius: 10px;
+        border: 1px solid var(--border);
+        background: rgba(255,255,255,0.08);
+        cursor: pointer;
+      }
+      button.primary { background: rgba(83,240,184,0.12); border-color: rgba(83,240,184,0.35); }
+      button:active { transform: translateY(1px); }
+      .status {
+        margin-top: 10px;
+        font-size: 12px;
+        color: var(--muted);
+        display: flex;
+        justify-content: space-between;
+        gap: 8px;
+      }
+      .status .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        padding: 6px 10px;
+        border-radius: 999px;
+        border: 1px solid var(--border);
+        background: rgba(0,0,0,0.20);
+        white-space: nowrap;
+      }
+      .dot { width: 8px; height: 8px; border-radius: 999px; background: var(--bad); }
+      .dot.ok { background: var(--good); }
+
+      .log {
+        padding: 12px;
+        flex: 1;
+        overflow: auto;
+      }
+      .msg {
+        border: 1px solid var(--border);
+        background: rgba(0,0,0,0.22);
+        border-radius: 12px;
+        padding: 10px 10px;
+        margin-bottom: 10px;
+      }
+      .meta { font-size: 11px; color: var(--muted); display: flex; justify-content: space-between; gap: 10px; }
+      .body { margin-top: 6px; font-size: 13px; white-space: pre-wrap; word-break: break-word; }
+      .small { font-size: 11px; color: var(--muted); }
+
+      @media (max-width: 980px) {
+        .wrap { grid-template-columns: 1fr; }
+        .card { min-height: 520px; }
+      }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>AXL Two-Node Chat</h1>
+      <div class="sub">Sends via <code>/send</code>, receives via polling <code>/recv</code>.</div>
+    </header>
+
+    <div class="wrap">
+      <section class="card" id="cardA">
+        <div class="top">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+            <div>
+              <div style="font-weight:600;">Node A</div>
+              <div class="small">Bridge URL: <code id="urlA">http://127.0.0.1:9002</code></div>
+            </div>
+            <button id="clearA">Clear</button>
+          </div>
+
+          <div class="row">
+            <label>Our key</label>
+            <input id="ourA" placeholder="(auto-filled from /topology)" />
+          </div>
+          <div class="row">
+            <label>Send to</label>
+            <input id="destA" placeholder="Peer public key to send to (usually Node B's key)" />
+          </div>
+          <div class="row">
+            <label>Message</label>
+            <textarea id="textA" placeholder="Type a message as Node A..."></textarea>
+          </div>
+          <div class="btns">
+            <button class="primary" id="sendA">Send (A → dest)</button>
+            <button id="refreshA">Refresh topology</button>
+          </div>
+          <div class="status">
+            <div class="pill"><span class="dot" id="dotA"></span><span id="statusA">unknown</span></div>
+            <div class="pill">Polling: <span id="pollA">off</span></div>
+          </div>
+        </div>
+        <div class="log" id="logA"></div>
+      </section>
+
+      <section class="card" id="cardB">
+        <div class="top">
+          <div style="display:flex; justify-content:space-between; align-items:center; gap:10px;">
+            <div>
+              <div style="font-weight:600;">Node B</div>
+              <div class="small">Bridge URL: <code id="urlB">http://127.0.0.1:9012</code></div>
+            </div>
+            <button id="clearB">Clear</button>
+          </div>
+
+          <div class="row">
+            <label>Our key</label>
+            <input id="ourB" placeholder="(auto-filled from /topology)" />
+          </div>
+          <div class="row">
+            <label>Send to</label>
+            <input id="destB" placeholder="Peer public key to send to (usually Node A's key)" />
+          </div>
+          <div class="row">
+            <label>Message</label>
+            <textarea id="textB" placeholder="Type a message as Node B..."></textarea>
+          </div>
+          <div class="btns">
+            <button class="primary" id="sendB">Send (B → dest)</button>
+            <button id="refreshB">Refresh topology</button>
+          </div>
+          <div class="status">
+            <div class="pill"><span class="dot" id="dotB"></span><span id="statusB">unknown</span></div>
+            <div class="pill">Polling: <span id="pollB">off</span></div>
+          </div>
+        </div>
+        <div class="log" id="logB"></div>
+      </section>
+    </div>
+
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>
+

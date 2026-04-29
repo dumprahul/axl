@@ -1,6 +1,8 @@
 module github.com/gensyn-ai/axl
 
-go 1.25.5
+go 1.25
+
+toolchain go1.25.5
 
 require (
 	github.com/gologme/log v1.3.0
