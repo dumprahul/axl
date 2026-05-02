@@ -1,65 +1,214 @@
-# chatp · standalone AXL chat
+# chatp
 
-Tiny **standalone** web shell around the **AXL Go `node`** binary: generate a **local ED25519 key + `node-config.json`**, start your node from the UI, paste a **recipient’s hex public key** (64 chars), then chat using the node’s **`/send`** and **`/recv`** HTTP APIs (same behavior as `web-chat`, one peer at a time in the transcript).
+**chatp** is a small **standalone** web app in this folder. It helps you run the **AXL Go `node`**, create a **local identity** (Ed25519 private key + `node-config.json`), and **chat** with another peer over the network using the node’s HTTP APIs:
 
-Nothing here runs blockchain-in-browser; your browser talks to **`chatp`’s Express server**, which talks to **`./node`** on `127.0.0.1`.
+- **`POST /send`** — send bytes to a destination **hex public key** (64 characters).
+- **`GET /recv`** — poll for inbound messages (raw queue; not A2A/MCP envelopes).
 
-## Prerequisites
+Your **browser** only talks to **chatp’s Express server** on `127.0.0.1`. That server runs **OpenSSL** to create keys, optionally **starts `./node`**, and **proxies** traffic to the node’s local bridge (e.g. `http://127.0.0.1:9132`).
 
-1. **Build the AXL node** (repository root):
+---
 
-   ```bash
-   cd /path/to/axl
-   make build
-   ```
+## Repository layout (important)
 
-   Confirm `node` exists next to `cmd/` (`axl/node`).
+`chatp` sits **inside** the AXL repo. From this README’s perspective:
 
-2. **OpenSSL** on `PATH` (for `openssl genpkey`), standard on macOS/Linux.
+```text
+<axl-repo-root>/          ← directory with go.mod, Makefile, `node` binary after build
+├── Makefile
+├── go.mod
+├── node                    ← created by: make build
+├── node-config-3.json      ← default template merged into chatp when you generate identity
+├── cmd/
+└── chatp/                  ← this folder
+    ├── package.json
+    ├── server.js
+    ├── public/             ← web UI
+    └── data/               ← created at runtime (private key + config) — gitignored
+```
 
-## Install & run (`chatp` only needs Express)
+All shell examples below assume:
 
-From this folder (example on macOS):
+- **`<axl-repo-root>`** = the folder that contains **`go.mod`** and **`Makefile`** (parent of **`chatp/`**).
+
+---
+
+## Prerequisites (from scratch)
+
+| Requirement | Notes |
+|-------------|--------|
+| **Go toolchain** | Used by `make build` in the AXL repo (see upstream `README.md` for Go version). |
+| **Node.js** | **18+** recommended (uses global `fetch`). |
+| **npm** | Comes with Node. |
+| **OpenSSL** | `openssl` on `PATH` — standard on macOS/Linux. |
+| **Network** | Outbound access to the **`Peers`** in your config (defaults use public bootstrap nodes from the main AXL docs). |
+
+---
+
+## Part A — Build the AXL `node` binary (once)
+
+From **`<axl-repo-root>`**:
 
 ```bash
-cd /Users/apple/axl/axl/chatp
+cd <axl-repo-root>
+make build
+```
+
+Confirm the binary exists:
+
+```bash
+ls -la node
+# On Windows (if you build there), the file may be node.exe
+```
+
+If `make build` fails, fix your Go version / toolchain per the main **[axl README](../README.md)** and **[docs/configuration.md](../docs/configuration.md)**.
+
+---
+
+## Part B — Install and start chatp
+
+```bash
+cd <axl-repo-root>/chatp
 npm install
 npm start
 ```
 
-Open **http://127.0.0.1:3333** (or set `PORT`).
+You should see a line like:
 
-Identity generation **merges the repo template** **`../node-config-3.json`** into **`./data/node-config.json`** next to **`./data/private.pem`**. Ports (`api_port`, `tcp_port`, `bridge_addr`) are filled from defaults **only when missing** in that template — see **`CHATP_API_PORT` / `CHATP_TCP_PORT`**. Override the template path with **`CHATP_CONFIG_TEMPLATE`** if needed.
+```text
+[chatp] http://127.0.0.1:3333
+```
 
-## Typical flow In the UI
+Open in your browser:
 
-1. Click **Generate new identity & config** — creates `./data/private.pem` and `./data/node-config.json` (default bootstrap peers aligned with upstream examples).
-2. Click **Start AXL node** — runs the Go `./node -config node-config.json` with working directory `./data/` (paths in config stay stable).
-3. Copy **Your public key** (from `GET /topology` once the node is up).
-4. Paste **Recipient public key**.
-5. Type messages · **Enter** sends; inbound lines are polled automatically.
+**http://127.0.0.1:3333**
 
-Stop the node from the UI with **Stop AXL node** before switching ports or regenerating identity.
+Use another port if needed:
 
-## Environment
+```bash
+PORT=4000 npm start
+```
+
+---
+
+## Part C — Create identity and config (first time)
+
+In the **chatp** web UI:
+
+1. **Optional:** check **Regenerate** if `data/` already exists and you want a **new** key (this overwrites `private.pem` and rebuilds `node-config.json`).
+2. Click **Generate identity & config**.
+
+What this does:
+
+- Runs **`openssl genpkey -algorithm ed25519`** → writes **`chatp/data/private.pem`** (**secret; never share**).
+- Reads the template **`../node-config-3.json`** (override with **`CHATP_CONFIG_TEMPLATE`**) and merges it into **`chatp/data/node-config.json`**, with:
+  - **`PrivateKeyPath`**: `"private.pem"` (relative to `data/` when you run `./node`),
+  - **`Peers` / `Listen`** from the template,
+  - **`bridge_addr`**, **`api_port`**, **`tcp_port`** added **only if missing** in the template (defaults: `127.0.0.1`, **9132**, **7102** — avoids clashing with another local node on 9002).
+
+The top of the page shows **Your node’s public key** once the bridge is up (from **`GET /topology`** → **`our_public_key`**).
+
+---
+
+## Part D — Start the AXL node (required for chat)
+
+You need **exactly one** running bridge using **`chatp/data/node-config.json`**.
+
+### Option 1 — From the UI (easiest)
+
+Click **Start AXL node**. chatp spawns:
+
+```text
+<axl-repo-root>/node -config node-config.json
+```
+
+with **`cwd`** = **`chatp/data/`**, so **`private.pem`** resolves correctly.
+
+### Option 2 — Manual terminal
+
+```bash
+cd <axl-repo-root>/chatp/data
+../../node -config node-config.json
+```
+
+Leave this process running while you chat.
+
+Successful startup usually logs something like **Listening on 127.0.0.1:&lt;api_port&gt;** and connects to **`Peers`** over time.
+
+To stop:
+
+- UI: **Stop AXL node**, or  
+- Terminal: **Ctrl+C** where `./node` is running.
+
+---
+
+## Part E — Chat with someone else
+
+Both sides must:
+
+1. Have built **`node`** and be running **`chatp`** (or another client) **or** speak to the bridge API directly.
+2. Run their own `./node` with their own **`data/private.pem`** and **`data/node-config.json`** (or equivalent).
+3. Be able to route to each other (same **`Peers` / bootstrap** pattern as usual for AXL; see main docs).
+
+**In the UI:**
+
+1. Wait until **Your node’s public key** appears (topology reachable).
+2. Send your **hex public key** to your peer **out of band** (message, DM, etc.).
+3. Paste their **hex public key** (64 chars) into **Recipient**.
+4. Type a message · **Enter** sends (Shift+Enter = newline).
+
+Inbound lines from **that** sender appear when **`GET /recv`** returns **`200`**; the UI polls automatically.
+
+---
+
+## Environment variables
 
 | Variable | Purpose |
 |---------|---------|
-| `PORT` | Web UI + API (default **3333**). |
-| `CHATP_AXL_NODE_BIN` | Absolute path to the `node` binary. Default: parent directory `../node` (i.e. `axl/node` when `cwd` is `axl/chatp`). |
-| `CHATP_WEB_HOST` | Bind address for Express (default **127.0.0.1**). Only widen if you trust your network; this server can start processes and touches your filesystem under `./data/`). |
-| `CHATP_DEFAULT_PEERS` | Optional JSON array of peer URIs, e.g. `["tls://1.2.3.4:9001"]`. If unset, packaged defaults match the upstream README examples. |
-| `CHATP_API_PORT` | HTTP bridge port written into `./data/node-config.json` when creating identity (default **9132**). |
-| `CHATP_TCP_PORT` | TCP port for the userspace listener (default **7102**) — change if occupied. |
-| `CHATP_CONFIG_TEMPLATE` | Absolute path to a JSON template (default **`../node-config-3.json`** relative to `chatp/`). Used when clicking **Generate identity & config**. |
+| `PORT` | Web server port (**default `3333`**). |
+| `CHATP_AXL_NODE_BIN` | Full path to the Go **`node`** binary if not **`<axl-repo-root>/node`**. |
+| `CHATP_WEB_HOST` | Bind address for Express (**default `127.0.0.1`**). Do not expose to the internet without understanding the risk: this app can start processes and write under **`./data/`**. |
+| `CHATP_CONFIG_TEMPLATE` | Path to JSON template (**default** resolves to **`<axl-repo-root>/node-config-3.json`**). |
+| `CHATP_API_PORT` | Default **HTTP bridge** port written into **`data/node-config.json`** when **`api_port`** is omitted in the template (**default `9132`**). |
+| `CHATP_TCP_PORT` | Default **TCP** port for the userspace listener when **`tcp_port`** is omitted (**default `7102`**). |
+| `CHATP_DEFAULT_PEERS` | JSON array of peer URIs; only used if the template has **no** `Peers` (rare). |
 
-## Data layout
+Set **`CHATP_API_PORT`** / **`CHATP_TCP_PORT`** **before** clicking **Generate identity & config** if **9132** / **7102** are already in use.
 
-- `./data/private.pem` — **keep secret**.
-- `./data/node-config.json` — Yggdrasil + bridge settings referenced by `./node`.
+---
+
+## Files under `chatp/data/` (gitignored)
+
+| File | Role |
+|------|------|
+| **`private.pem`** | **Your secret key.** Back it up if you care about this identity; never commit it. |
+| **`node-config.json`** | Yggdrasil + bridge settings used by **`./node`**. |
+
+---
 
 ## Troubleshooting
 
-- **“node binary not found”** — build with `make build` or set `CHATP_AXL_NODE_BIN`.
-- **`listen tcp … bind: address already in use`** — another process uses `api_port` / `tcp_port`; edit `node-config.json` or set `CHATP_API_PORT` / `CHATP_TCP_PORT` **before** generating a new identity.
-- **Outbound send fails (`502`)** — recipient offline, wrong key, routing/peers unreachable, or their TCP listener not reachable; check both sides’ **`Peers`** and network.
+| Symptom | What to do |
+|---------|------------|
+| **`node binary not found`** | Run **Part A** from **`<axl-repo-root>`** or set **`CHATP_AXL_NODE_BIN`**. |
+| **`open … node-config.json: no such file`** | Run **Generate identity & config** in the UI (creates **`data/`**). |
+| **`listen tcp … bind: address already in use`** | Another **`node`** (or app) already uses **`api_port`** or **`tcp_port`**. Stop it, or set **`CHATP_API_PORT`** / **`CHATP_TCP_PORT`** and **regenerate** identity. |
+| **Public key stays empty** | Bridge not running or not reachable at the URL in **`data/node-config.json`** (`bridge_addr` + `api_port`). Start **`./node`** and check logs. |
+| **Send returns 502 / failed to reach peer** | Wrong recipient key, peer offline, no route, or TCP path not open between nodes; verify **`Peers`** and that the other side’s node is running. |
+| **`openssl` not found** | Install OpenSSL and ensure it is on **`PATH`**. |
+
+---
+
+## Security notes
+
+- **`chatp`** is meant for **local development**: it binds to **127.0.0.1** by default and manages files under **`./data/`**.
+- Treat **`private.pem`** like a password.
+- For production or multi-user hosts, run the Go **`node`** under your own process manager and only expose what you intend.
+
+---
+
+## See also
+
+- Main AXL overview: **[README.md](../README.md)**
+- HTTP API details: **[docs/api.md](../docs/api.md)**
+- Configuration: **[docs/configuration.md](../docs/configuration.md)**
