@@ -34,5 +34,12 @@ Thumbs.db
 # Claude
 .claude/
 
+# JavaScript dependencies (chatp, web-chat, etc.)
+**/node_modules/
+
+# chatp standalone app — identity + merged node config (never commit)
+chatp/data/
+
+# Local AXL identity at repo root (do not commit generated keys)
 private.pem
 private-2.pem

@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>chatp · AXL</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <div class="shell">
+      <header class="top">
+        <div>
+          <h1>chatp</h1>
+          <p class="tag">Standalone helper for local <code>./node</code> · HTTP <code>/send</code> + <code>/recv</code></p>
+        </div>
+      </header>
+
+      <section class="card pubkey-card" aria-live="polite">
+        <h2>Your node’s public key</h2>
+        <p class="muted hint-key">
+          This is <code>our_public_key</code> from the running node’s <code>GET /topology</code>. Share it so others can chat with you. It matches the identity in
+          <code>data/private.pem</code> generated here.
+        </p>
+        <div id="keyState" class="key-state muted">Checking bridge…</div>
+        <pre id="pubKeyBig" class="pub-key" translate="no">—</pre>
+      </section>
+
+      <section class="card" id="setup">
+        <h2>1 · Identity &amp; node</h2>
+        <p class="muted">
+          <strong>Generate</strong> creates <code>data/private.pem</code> and merges the repo template
+          <code>node-config-3.json</code> → <code>data/node-config.json</code>
+          (<code>Peers</code> / <code>Listen</code> preserved; bridge defaults added if missing). Start the Go node to load your
+          hex public key above.
+        </p>
+
+        <div class="toolbar">
+          <label class="ck">
+            <input type="checkbox" id="identityForce" />
+            Regenerate (overwrites identity)
+          </label>
+          <button type="button" id="btnIdentity">Generate identity &amp; config</button>
+          <button type="button" id="btnNodeStart">Start AXL node</button>
+          <button type="button" id="btnNodeStop">Stop AXL node</button>
+          <button type="button" id="btnRefresh" class="ghost">Refresh status</button>
+        </div>
+
+        <dl class="status-grid" id="statusGrid"></dl>
+
+        <div class="field">
+          <label for="yourKey">Your public key</label>
+          <div class="row">
+            <textarea id="yourKey" rows="3" readonly placeholder="(start node · wait until reachable)"></textarea>
+            <button type="button" id="btnCopyKey" class="ghost">Copy</button>
+          </div>
+        </div>
+
+        <div class="field">
+          <label for="ipv6">Your Ygg IPv6 · bridge</label>
+          <input id="ipv6" readonly placeholder="—" />
+        </div>
+
+        <details class="adv">
+          <summary>Peers (advanced)</summary>
+          <textarea id="peersTa" rows="4" spellcheck="false" placeholder='["tls://…"]'></textarea>
+          <button type="button" id="btnSavePeers">Save peers to config</button>
+          <span class="muted small">Applied to <code>data/node-config.json</code>; restart bridge if running.</span>
+        </details>
+        <pre id="setupMsg" class="msg"></pre>
+      </section>
+
+      <section class="card chat" id="chatCard">
+        <h2>2 · Chat</h2>
+        <p class="muted">Recipient must be exactly <strong>64 hex characters</strong> (topology <code>our_public_key</code>).</p>
+
+        <div class="field">
+          <label for="destPeerId">Recipient public key</label>
+          <input id="destPeerId" autocomplete="off" spellcheck="false" placeholder="Paste friend's hex public key" />
+          <button type="button" id="btnRemember" class="ghost small">Remember (browser)</button>
+        </div>
+
+        <div class="msgs" id="msgs" aria-live="polite"></div>
+
+        <div class="composer">
+          <textarea id="msgInput" rows="3" placeholder="Message · Enter sends (Shift+Enter newline)"></textarea>
+          <button type="button" id="btnSend">Send</button>
+        </div>
+
+        <pre id="chatMsg" class="msg"></pre>
+      </section>
+    </div>
+    <script type="module" src="./app.js"></script>
+  </body>
+</html>

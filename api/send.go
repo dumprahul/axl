@@ -77,6 +77,15 @@ func HandleSend(TCPPort int, netStack *stack.Stack) http.HandlerFunc {
 			return
 		}
 
+		// gVisor's gonet TCP can otherwise close before buffered data is fully emitted.
+		// Best-effort half-close plus a tiny flush window improves reliability for
+		// short fire-and-forget payloads.
+		if cw, ok := conn.(interface{ CloseWrite() error }); ok {
+			_ = cw.CloseWrite()
+		}
+		_ = conn.Close()
+		time.Sleep(10 * time.Millisecond)
+
 		// Return minimal response immediately; MCP traffic uses a separate endpoint.
 		w.Header().Set("Content-Type", "application/octet-stream")
 		w.Header().Set("X-Sent-Bytes", fmt.Sprintf("%d", len(data)))
